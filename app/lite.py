@@ -90,7 +90,7 @@ def run_lite(site, model: str = "qwen-flash") -> LiteResult:
             {"role": "user", "content": build_user(site)},
         ],
         temperature=0.4,
-        max_tokens=1100,
+        max_tokens=2000,
         extra_body={"enable_thinking": False},
     )
     content = resp.choices[0].message.content or ""

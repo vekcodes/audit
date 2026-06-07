@@ -72,7 +72,7 @@ def build_jsonl(sites: Dict[str, SiteData], out_path: Path,
 
 # ---------------------------------------------------------------- submit
 def build_jsonl_summaries(summaries: Dict[str, str], out_path: Path,
-                          model: Optional[str] = None, max_tokens: int = 1100
+                          model: Optional[str] = None, max_tokens: int = 1600
                           ) -> Dict[str, str]:
     """Like build_jsonl but from persisted {url: signals-summary} (resumable)."""
     model = model or "qwen-flash"
