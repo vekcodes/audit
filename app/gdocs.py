@@ -15,6 +15,7 @@ paragraph borders, and table cell styling.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -22,6 +23,28 @@ from PIL import Image
 
 from . import config, google_auth
 from .models import AuditResult
+
+
+def _ex(req, tries: int = 6):
+    """Execute a Google API request with exponential backoff on rate limits.
+
+    Handles the Docs/Drive 'WriteRequestsPerMinutePerUser' 429s (and transient
+    500/503) so bursty callers (e.g. Clay) self-heal instead of failing.
+    """
+    from googleapiclient.errors import HttpError
+
+    delay = 2
+    for n in range(tries):
+        try:
+            return req.execute()
+        except HttpError as e:
+            status = getattr(e, "status_code", None) or getattr(
+                getattr(e, "resp", None), "status", None)
+            if int(status or 0) in (429, 500, 503) and n < tries - 1:
+                time.sleep(delay)
+                delay = min(delay * 2, 20)
+                continue
+            raise
 
 # ---- palette (hex) ----
 INK = "161618"; RED = "FF3B14"; RED_DK = "C8260A"; GREEN = "2D8A5C"
@@ -56,11 +79,10 @@ def _upload_public_image(drive, path: Path) -> tuple[str, str]:
     mime = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
     meta = {"name": f"rt-audit-asset-{path.name}"}
     media = MediaFileUpload(str(path), mimetype=mime, resumable=False)
-    f = drive.files().create(body=meta, media_body=media, fields="id").execute()
+    f = _ex(drive.files().create(body=meta, media_body=media, fields="id"))
     fid = f["id"]
-    drive.permissions().create(
-        fileId=fid, body={"role": "reader", "type": "anyone"}
-    ).execute()
+    _ex(drive.permissions().create(
+        fileId=fid, body={"role": "reader", "type": "anyone"}))
     return f"https://drive.google.com/uc?export=download&id={fid}", fid
 
 
@@ -71,7 +93,7 @@ class DocBuilder:
     def __init__(self, title: str):
         self.docs = google_auth.docs_service()
         self.drive = google_auth.drive_service()
-        doc = self.docs.documents().create(body={"title": title}).execute()
+        doc = _ex(self.docs.documents().create(body={"title": title}))
         self.doc_id = doc["documentId"]
         self.cursor = self._end_index()
         self.reqs: List[dict] = []
@@ -80,14 +102,13 @@ class DocBuilder:
 
     # ---- low-level ----
     def _end_index(self) -> int:
-        doc = self.docs.documents().get(documentId=self.doc_id).execute()
+        doc = _ex(self.docs.documents().get(documentId=self.doc_id))
         return doc["body"]["content"][-1]["endIndex"] - 1
 
     def _flush(self):
         if self.reqs:
-            self.docs.documents().batchUpdate(
-                documentId=self.doc_id, body={"requests": self.reqs}
-            ).execute()
+            _ex(self.docs.documents().batchUpdate(
+                documentId=self.doc_id, body={"requests": self.reqs}))
             self.reqs = []
 
     # ---- text primitives ----
@@ -280,15 +301,14 @@ class DocBuilder:
         end = self._end_index()
         n_rows = len(rows) + 1
         n_cols = len(headers)
-        self.docs.documents().batchUpdate(
+        _ex(self.docs.documents().batchUpdate(
             documentId=self.doc_id,
             body={"requests": [{
                 "insertTable": {"location": {"index": end},
                                 "rows": n_rows, "columns": n_cols}
-            }]},
-        ).execute()
+            }]}))
 
-        doc = self.docs.documents().get(documentId=self.doc_id).execute()
+        doc = _ex(self.docs.documents().get(documentId=self.doc_id))
         table_el, table_start = self._find_last_table(doc)
         grid = table_el["table"]["tableRows"]
 
@@ -354,10 +374,9 @@ class DocBuilder:
                     }
                 })
 
-        self.docs.documents().batchUpdate(
+        _ex(self.docs.documents().batchUpdate(
             documentId=self.doc_id,
-            body={"requests": cell_reqs + col_reqs + cell_style_reqs},
-        ).execute()
+            body={"requests": cell_reqs + col_reqs + cell_style_reqs}))
         self.cursor = self._end_index()
 
     def rich_table(self, headers: List[str], rows, col_widths_pt: List[float],
@@ -368,15 +387,14 @@ class DocBuilder:
         end = self._end_index()
         n_rows = len(rows) + 1
         n_cols = len(headers)
-        self.docs.documents().batchUpdate(
+        _ex(self.docs.documents().batchUpdate(
             documentId=self.doc_id,
             body={"requests": [{
                 "insertTable": {"location": {"index": end},
                                 "rows": n_rows, "columns": n_cols}
-            }]},
-        ).execute()
+            }]}))
 
-        doc = self.docs.documents().get(documentId=self.doc_id).execute()
+        doc = _ex(self.docs.documents().get(documentId=self.doc_id))
         table_el, table_start = self._find_last_table(doc)
         grid = table_el["table"]["tableRows"]
 
@@ -450,10 +468,9 @@ class DocBuilder:
                     "fields": ("backgroundColor,paddingTop,paddingBottom,"
                                "paddingLeft,paddingRight")}})
 
-        self.docs.documents().batchUpdate(
+        _ex(self.docs.documents().batchUpdate(
             documentId=self.doc_id,
-            body={"requests": text_reqs + style_reqs},
-        ).execute()
+            body={"requests": text_reqs + style_reqs}))
         self.cursor = self._end_index()
 
     @staticmethod
@@ -469,9 +486,8 @@ class DocBuilder:
         self._flush()
         url = f"https://docs.google.com/document/d/{self.doc_id}/edit"
         if make_public:
-            self.drive.permissions().create(
-                fileId=self.doc_id, body={"role": "reader", "type": "anyone"}
-            ).execute()
+            _ex(self.drive.permissions().create(
+                fileId=self.doc_id, body={"role": "reader", "type": "anyone"}))
         return {
             "document_id": self.doc_id,
             "edit_url": url,
