@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import re
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
@@ -20,8 +21,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import config, oauth_web
+from . import config, oauth_web, ratestore
 from .pipeline_native import run_native
+
+
+def _normalize(website: str) -> str:
+    w = website.strip().lower()
+    w = re.sub(r"^https?://", "", w)
+    return w.rstrip("/")
 
 app = FastAPI(title="RankedTag SEO Audit API (Vercel)", version="1.0.0")
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -54,6 +61,7 @@ def _health():
         "needs_authorization": not bool(config.GOOGLE_REFRESH_TOKEN),
         "authorize_at": "/api/oauth/start",
         "usage": 'POST with {"website": "https://example.com", "mode": "lite"}',
+        **ratestore.status(),
     }
 
 
@@ -97,9 +105,35 @@ async def post_audit(path: str, req: AuditRequest):
         config.require_qwen()
         config.require_google()
         mode = req.mode if req.mode in ("lite", "full") else "lite"
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            _executor, lambda: run_native(req.website, mode))
+        url = _normalize(req.website)
+
+        # 1. Already built? return instantly (idempotent; saves tokens + writes).
+        cached = ratestore.get_cached(url)
+        if cached:
+            return {**cached, "cached": True}
+
+        # 2. Dedup: only one in-flight audit per URL.
+        if not ratestore.acquire_lock(url):
+            return JSONResponse(
+                {"status": "processing", "website": req.website,
+                 "detail": "An audit for this site is already running — retry shortly."},
+                status_code=429, headers={"Retry-After": "30"})
+        try:
+            # 3. Pace under the Google write quota.
+            if not ratestore.acquire_slot():
+                return JSONResponse(
+                    {"status": "rate_limited", "website": req.website,
+                     "detail": "Rate limit reached — retry shortly."},
+                    status_code=429, headers={"Retry-After": "20"})
+
+            # 4. Do the work, cache the result, return it.
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                _executor, lambda: run_native(req.website, mode))
+            ratestore.set_cached(url, result)
+            return result
+        finally:
+            ratestore.release_lock(url)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001
