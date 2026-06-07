@@ -1,0 +1,15 @@
+.venv/
+runs/
+extracted/
+*.skill
+skill/scripts/
+skill/assets/
+__pycache__/
+*.pyc
+.env
+requirements-local.txt
+run_batch.py
+setup_oauth.py
+get_token.py
+.oauth_state.json
+requirements-local.txt

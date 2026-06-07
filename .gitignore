@@ -1,0 +1,10 @@
+.venv/
+.env
+.env.local
+runs/
+__pycache__/
+*.pyc
+extracted/
+.oauth_state.json
+.vercel/
+node_modules/

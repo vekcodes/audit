@@ -1,0 +1,4 @@
+# Local/full + batch extras: adds the browser renderer used for the PNG visuals.
+# Install with:  pip install -r requirements-local.txt && playwright install chromium
+-r requirements.txt
+playwright==1.60.0
