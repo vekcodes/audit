@@ -77,21 +77,30 @@ def parse_lite(content: str, fallback_client: str = "") -> LiteResult:
 
 
 def run_lite(site, model: str = "qwen-flash") -> LiteResult:
-    """Single-site lite audit via a fast, non-thinking model (~1-3s)."""
+    """Single-site lite audit via a fast, non-thinking model (~1-3s).
+
+    Retries once on a malformed-JSON reply (lower temperature) before failing.
+    """
     from openai import OpenAI
     from . import config
 
     config.require_qwen()
     client = OpenAI(api_key=config.QWEN_API_KEY, base_url=config.QWEN_BASE_URL)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": LITE_SYS},
-            {"role": "user", "content": build_user(site)},
-        ],
-        temperature=0.4,
-        max_tokens=2000,
-        extra_body={"enable_thinking": False},
-    )
-    content = resp.choices[0].message.content or ""
-    return parse_lite(content, fallback_client=site.final_url)
+    last_err = None
+    for attempt in range(2):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": LITE_SYS},
+                {"role": "user", "content": build_user(site)},
+            ],
+            temperature=0.4 if attempt == 0 else 0.1,
+            max_tokens=2000,
+            extra_body={"enable_thinking": False},
+        )
+        content = resp.choices[0].message.content or ""
+        try:
+            return parse_lite(content, fallback_client=site.final_url)
+        except Exception as e:  # noqa: BLE001 - re-roll on bad JSON
+            last_err = e
+    raise last_err
