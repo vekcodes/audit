@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
@@ -31,7 +32,12 @@ def _normalize(website: str) -> str:
     return w.rstrip("/")
 
 app = FastAPI(title="RankedTag SEO Audit API (Vercel)", version="1.0.0")
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=8)
+
+# How long a request will WAIT for a rate slot before giving up with a 429.
+# Kept under Vercel's function timeout (audit itself then needs ~10-20s).
+MAX_WAIT_S = 30
+POLL_S = 1.5
 
 
 class AuditRequest(BaseModel):
@@ -112,19 +118,29 @@ async def post_audit(path: str, req: AuditRequest):
         if cached:
             return {**cached, "cached": True}
 
-        # 2. Dedup: only one in-flight audit per URL.
+        # 2. Dedup: if the same URL is already being built, wait for its result
+        #    instead of failing (and instead of building a duplicate doc).
         if not ratestore.acquire_lock(url):
+            for _ in range(int(MAX_WAIT_S / POLL_S)):
+                await asyncio.sleep(POLL_S)
+                c = ratestore.get_cached(url)
+                if c:
+                    return {**c, "cached": True}
             return JSONResponse(
                 {"status": "processing", "website": req.website,
-                 "detail": "An audit for this site is already running — retry shortly."},
-                status_code=429, headers={"Retry-After": "30"})
+                 "detail": "Still building this site — retry shortly."},
+                status_code=429, headers={"Retry-After": "15"})
         try:
-            # 3. Pace under the Google write quota.
-            if not ratestore.acquire_slot():
-                return JSONResponse(
-                    {"status": "rate_limited", "website": req.website,
-                     "detail": "Rate limit reached — retry shortly."},
-                    status_code=429, headers={"Retry-After": "20"})
+            # 3. WAIT for a rate slot (non-blocking) so the caller gets a 200
+            #    rather than a 429. Only give up if the backlog is very deep.
+            deadline = time.monotonic() + MAX_WAIT_S
+            while not ratestore.acquire_slot():
+                if time.monotonic() > deadline:
+                    return JSONResponse(
+                        {"status": "rate_limited", "website": req.website,
+                         "detail": "Server busy — retry shortly."},
+                        status_code=429, headers={"Retry-After": "15"})
+                await asyncio.sleep(POLL_S)
 
             # 4. Do the work, cache the result, return it.
             loop = asyncio.get_event_loop()
