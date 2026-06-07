@@ -338,7 +338,6 @@ class DocBuilder:
                 fill = INK if ri == 0 else (PAPER if ri % 2 == 0 else WHITE)
                 cell_style_reqs.append({
                     "updateTableCellStyle": {
-                        "tableStartLocation": {"index": table_start},
                         "tableRange": {
                             "tableCellLocation": {
                                 "tableStartLocation": {"index": table_start},
@@ -439,7 +438,6 @@ class DocBuilder:
                 else:
                     fill = PAPER if ri % 2 == 0 else WHITE
                 style_reqs.append({"updateTableCellStyle": {
-                    "tableStartLocation": {"index": table_start},
                     "tableRange": {"tableCellLocation": {
                         "tableStartLocation": {"index": table_start},
                         "rowIndex": ri, "columnIndex": ci},
