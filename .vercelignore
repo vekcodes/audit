@@ -13,3 +13,7 @@ setup_oauth.py
 get_token.py
 .oauth_state.json
 requirements-local.txt
+
+architecture.excalidraw
+gen_excalidraw.py
+cleanup_test_docs.py
