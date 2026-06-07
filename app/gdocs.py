@@ -113,7 +113,7 @@ class DocBuilder:
 
     # ---- text primitives ----
     def text(self, s: str, *, color=INK, bold=False, italic=False, size=10.5,
-             link: Optional[str] = None, underline=False) -> tuple:
+             link: Optional[str] = None, underline=False, font=FONT) -> tuple:
         """Queue an insertText at the cursor; return the (start, end) range."""
         start = self.cursor
         self.reqs.append({"insertText": {"location": {"index": start}, "text": s}})
@@ -124,7 +124,7 @@ class DocBuilder:
             "italic": italic,
             "underline": underline,
             "fontSize": {"magnitude": size, "unit": "PT"},
-            "weightedFontFamily": {"fontFamily": FONT},
+            "weightedFontFamily": {"fontFamily": font},
         }
         fields = "foregroundColor,bold,italic,underline,fontSize,weightedFontFamily"
         if link:
@@ -155,7 +155,8 @@ class DocBuilder:
         for r in runs:
             self.text(r["text"], color=r.get("color", INK), bold=r.get("bold", False),
                       italic=r.get("italic", False), size=r.get("size", 10.5),
-                      link=r.get("link"), underline=r.get("underline", False))
+                      link=r.get("link"), underline=r.get("underline", False),
+                      font=r.get("font", FONT))
         self.text("\n")
         para_end = self.cursor
 

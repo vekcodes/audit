@@ -61,17 +61,26 @@ def scorecard_native(b: DocBuilder, overall: int, status: str, scores: dict):
         "AI Search Readiness": "AI search readiness",
         "Images": "Images",
     }
-    rows = []
+    # Monospace lines so the labels/bars/scores align by character width —
+    # no Docs table, which keeps each audit to ~2 write requests (high throughput).
+    mono = "Courier New"
     for cat in CATEGORY_WEIGHTS:
         if cat not in scores:
             continue
         v = int(scores[cat])
-        rows.append([
-            [{"text": display[cat], "bold": True, "color": INK, "size": 9.5}],
-            _bar_runs(v),
-            [{"text": str(v), "bold": True, "color": _band_color(v), "size": 10}],
-        ])
-    b.rich_table(["Category", "Score", ""], rows, [165, 240, 45])
+        filled = max(0, min(BAR_LEN, round(v / 100 * BAR_LEN)))
+        col = _band_color(v)
+        runs = [{"text": display[cat].ljust(26), "color": INK, "size": 9.5,
+                 "font": mono, "bold": True}]
+        if filled:
+            runs.append({"text": BLOCK * filled, "color": col, "size": 9.5,
+                         "font": mono})
+        if BAR_LEN - filled:
+            runs.append({"text": BLOCK * (BAR_LEN - filled), "color": PAPER2,
+                         "size": 9.5, "font": mono})
+        runs.append({"text": " " + str(v).rjust(3), "color": col, "size": 9.5,
+                     "font": mono, "bold": True})
+        b.para(runs, space_after=2)
     b.body([{"text": "Green >=75 (healthy)  -  amber 50-74 (fair)  -  red <50 "
              "(needs attention).", "italic": True, "color": MUTE, "size": 9}],
            space_after=8)
